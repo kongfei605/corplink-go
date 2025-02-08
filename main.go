@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -73,9 +74,9 @@ func main() {
 		}
 	}
 
-	withWgLog := false
+	logLevel := LogLevelError
 	if conf.DebugWg != nil {
-		withWgLog = *conf.DebugWg
+		logLevel = LogLevelVerbose
 	}
 
 	client, err := NewClient(conf)
@@ -91,7 +92,8 @@ func main() {
 		if client.NeedLogin() {
 			log.Println("Not login yet, try to login")
 			if err := client.Login(); err != nil {
-				log.Fatalf("Login failed: %v", err)
+				log.Printf("Login failed: %v", err)
+				return
 			}
 			log.Println("Login success")
 		}
@@ -112,7 +114,7 @@ func main() {
 
 	log.Printf("Start wg-corplink for %s", name)
 
-	if !StartWgGo(name, int(wgConf.Protocol), withWgLog) {
+	if StartWgGo(logLevel, int(wgConf.Protocol), name) != 0 {
 		log.Printf("Failed to start wg-corplink for %s", name)
 		os.Exit(EPERM)
 	}
@@ -140,13 +142,12 @@ func main() {
 	case <-sigChan:
 		log.Println("Signal received, shutting down")
 	case <-time.After(60 * time.Second):
-		if err := client.KeepAliveVPN(wgConf, 60); err != nil {
-			exitCode = ETIMEDOUT
-		}
+		client.KeepAliveVPN(wgConf, 60)
+		exitCode = ETIMEDOUT
 	case <-func() chan bool {
 		ch := make(chan bool)
 		go func() {
-			uapi.CheckWgConnection()
+			uapi.CheckWgConnection(context.Background())
 			ch <- true
 		}()
 		return ch

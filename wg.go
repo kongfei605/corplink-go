@@ -1,15 +1,5 @@
 package main
 
-/*
-#include <stdlib.h>
-#include "libwg.h"  // 假设已通过cgo生成对应头文件
-
-extern enum LogLevel {
-    LogLevelError,
-    LogLevelVerbose
-};
-*/
-import "C"
 import (
 	"bytes"
 	"context"
@@ -19,27 +9,27 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
+
+	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
+	"golang.zx2c4.com/wireguard/ipc"
+	"golang.zx2c4.com/wireguard/tun"
 )
 
-// 对应Rust的start_wg_go函数
-func StartWgGo(name string, protocol int, withLog bool) bool {
-	logLevel := C.LogLevelError
-	if withLog {
-		logLevel = C.LogLevelVerbose
-	}
+const (
+	LogLevelSilent  = 0
+	LogLevelError   = 1
+	LogLevelVerbose = 2
 
-	cName := C.CString(name)
-	defer C.free(unsafe.Pointer(cName))
+	ExitSetupSuccess = 0
+	ExitSetupFailed  = 1
+)
 
-	ret := C.startWg(logLevel, C.int(protocol), cName)
-	return ret == 0
-}
-
-// 对应Rust的stop_wg_go函数
-func StopWgGo() {
-	C.stopWg()
-}
+var (
+	wgDevice *device.Device
+	logger   *device.Logger
+	Version  = "unknown" // 确保版本号有定义或通过构建参数注入
+)
 
 // UAPI客户端结构体
 type UAPIClient struct {
@@ -97,21 +87,16 @@ func (u *UAPIClient) ConfigureWG(conf *WgConf) error {
 
 // 处理UAPI请求
 func (u *UAPIClient) processUAPI(cmd string) error {
-	cCmd := C.CString(cmd)
-	defer C.free(unsafe.Pointer(cCmd))
 
-	result := C.uapi(cCmd)
-	defer C.free(unsafe.Pointer(result))
-
-	resp := C.GoString(result)
-	if !strings.Contains(resp, "errno=0") {
-		return errors.New("UAPI error: " + resp)
+	result := UAPI(cmd)
+	if !strings.Contains(result, "errno=0") {
+		return errors.New("UAPI error: " + result)
 	}
 	return nil
 }
 
 // 连接检查（对应Rust的check_wg_connection）
-func (u *UAPIClient) MonitorConnection(ctx context.Context) {
+func (u *UAPIClient) CheckWgConnection(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
@@ -128,14 +113,9 @@ func (u *UAPIClient) MonitorConnection(ctx context.Context) {
 }
 
 func (u *UAPIClient) checkHandshake() bool {
-	cCmd := C.CString("get=1\n\n")
-	defer C.free(unsafe.Pointer(cCmd))
-
-	result := C.uapi(cCmd)
-	defer C.free(unsafe.Pointer(result))
-
-	resp := C.GoString(result)
-	lines := strings.Split(resp, "\n")
+	cmd := "get=1\n\n"
+	result := UAPI(cmd)
+	lines := strings.Split(result, "\n")
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "last_handshake_time_sec") {
@@ -162,3 +142,88 @@ func (u *UAPIClient) checkHandshake() bool {
 // 辅助函数
 func containsSlash(s string) bool { return strings.Contains(s, "/") }
 func containsColon(s string) bool { return strings.Contains(s, ":") }
+
+func UAPI(cmdStr string) string {
+	content := cmdStr
+	cmds := strings.Split(content, "\n")
+	var result string
+
+	switch cmds[0] {
+	case "set=1":
+		logger.Verbosef("Setting uapi configuration")
+		config := strings.TrimPrefix(content, "set=1\n")
+		err := wgDevice.IpcSetOperation(strings.NewReader(config))
+
+		var status *device.IPCError
+		switch {
+		case err == nil:
+			result = "errno=0\n\n"
+		case errors.As(err, &status):
+			result = fmt.Sprintf("errno=%d\n\n", status.ErrorCode())
+		default:
+			result = fmt.Sprintf("errno=%d\n\n", ipc.IpcErrorUnknown)
+		}
+
+	case "get=1":
+		logger.Verbosef("Getting uapi configuration")
+		config, err := wgDevice.IpcGet()
+
+		var status *device.IPCError
+		switch {
+		case err == nil:
+			result = config + "errno=0\n\n"
+		case errors.As(err, &status):
+			result = fmt.Sprintf("errno=%d\n\n", status.ErrorCode())
+		default:
+			result = fmt.Sprintf("errno=%d\n\n", ipc.IpcErrorUnknown)
+		}
+
+	default:
+		logger.Verbosef("Unknown uapi command")
+		result = fmt.Sprintf("errno=%d\n\n", ipc.IpcErrorUnknown)
+	}
+
+	return result
+}
+
+func StopWgGo() {
+	if wgDevice != nil {
+		wgDevice.Close()
+		logger.Verbosef("Shutting down WireGuard device")
+	}
+}
+
+func StartWgGo(logLevel int, protocol int, ifaceName string) int {
+	logger = device.NewLogger(
+		logLevel,
+		fmt.Sprintf("wg-corplink(%s) ", ifaceName),
+	)
+
+	tunDevice, err := tun.CreateTUN(ifaceName, device.DefaultMTU)
+	if err == nil {
+		if realName, err := tunDevice.Name(); err == nil {
+			ifaceName = realName
+		}
+	}
+
+	if err != nil {
+		logger.Errorf("Failed to create TUN device: %v", err)
+		return ExitSetupFailed
+	}
+
+	logger.Verbosef("Starting wg-corplink version %s", Version)
+
+	switch protocol {
+	case 0: // UDP协议
+		wgDevice = device.NewDevice(tunDevice, conn.NewDefaultBind(), logger)
+	case 1: // TCP协议
+		// wgDevice = device.NewDevice(tunDevice, conn.NewTCPBind(), logger)
+		wgDevice = device.NewDevice(tunDevice, conn.NewDefaultBind(), logger)
+	default:
+		logger.Errorf("Unsupported protocol: %d", protocol)
+		return ExitSetupFailed
+	}
+
+	logger.Verbosef("WireGuard device %s initialized", ifaceName)
+	return ExitSetupSuccess
+}

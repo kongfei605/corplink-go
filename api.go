@@ -2,24 +2,25 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 )
 
 const URLGetCompany = "https://corplink.volcengine.cn/api/match"
 
 const (
-	URLGetLoginMethod         = "{{.url}}/api/login/setting?os={{.os}}&os_version={{.version}}"
-	URLGetTpsLoginMethod      = "{{.url}}/api/tpslogin/link?os={{.os}}&os_version={{.version}}"
-	URLGetTpsTokenCheck       = "{{.url}}/api/tpslogin/token/check?os={{.os}}&os_version={{.version}}"
-	URLGetCorplinkLoginMethod = "{{.url}}/api/lookup?os={{.os}}&os_version={{.version}}"
-	URLRequestCode            = "{{.url}}/api/login/code/send?os={{.os}}&os_version={{.version}}"
-	URLVerifyCode             = "{{.url}}/api/login/code/verify?os={{.os}}&os_version={{.version}}"
-	URLLoginPassword          = "{{.url}}/api/login?os={{.os}}&os_version={{.version}}"
-	URLListVPN                = "{{.url}}/api/vpn/list?os={{.os}}&os_version={{.version}}"
-	URLPingVPNHost            = "{{.url}}/vpn/ping?os={{.os}}&os_version={{.version}}"
-	URLFetchPeerInfo          = "{{.url}}/vpn/conn?os={{.os}}&os_version={{.version}}"
-	URLOperateVPN             = "{{.url}}/vpn/report?os={{.os}}&os_version={{.version}}"
-	URLOTP                    = "{{.url}}/api/v2/p/otp?os={{.os}}&os_version={{.version}}"
+	URLGetLoginMethod         = "{{.URL}}/api/login/setting?os={{.OS}}&os_version={{.Version}}"
+	URLGetTpsLoginMethod      = "{{.URL}}/api/tpslogin/link?os={{.OS}}&os_version={{.Version}}"
+	URLGetTpsTokenCheck       = "{{.URL}}/api/tpslogin/token/check?os={{.OS}}&os_version={{.Version}}"
+	URLGetCorplinkLoginMethod = "{{.URL}}/api/lookup?os={{.OS}}&os_version={{.Version}}"
+	URLRequestCode            = "{{.URL}}/api/login/code/send?os={{.OS}}&os_version={{.Version}}"
+	URLVerifyCode             = "{{.URL}}/api/login/code/verify?os={{.OS}}&os_version={{.Version}}"
+	URLLoginPassword          = "{{.URL}}/api/login?os={{.OS}}&os_version={{.Version}}"
+	URLListVPN                = "{{.URL}}/api/vpn/list?os={{.OS}}&os_version={{.Version}}"
+	URLPingVPNHost            = "{{.URL}}/vpn/ping?os={{.OS}}&os_version={{.Version}}"
+	URLFetchPeerInfo          = "{{.URL}}/vpn/conn?os={{.OS}}&os_version={{.Version}}"
+	URLOperateVPN             = "{{.URL}}/vpn/report?os={{.OS}}&os_version={{.Version}}"
+	URLOTP                    = "{{.URL}}/api/v2/p/otp?os={{.OS}}&os_version={{.Version}}"
 )
 
 type ApiName int
@@ -53,9 +54,9 @@ type VpnUrlParam struct {
 }
 
 type ApiURL struct {
-	userParam    UserUrlParam
-	vpnParam     VpnUrlParam
-	apiTemplates map[ApiName]*template.Template
+	UserParam    UserUrlParam
+	VpnParam     VpnUrlParam
+	ApiTemplates map[ApiName]*template.Template
 }
 
 func NewApiURL(conf *Config) *ApiURL {
@@ -82,7 +83,7 @@ func NewApiURL(conf *Config) *ApiURL {
 	}
 
 	for name, tmplStr := range templates {
-		tmpl, err := template.New(string(name)).Parse(tmplStr)
+		tmpl, err := template.New(fmt.Sprint(name)).Parse(tmplStr)
 		if err != nil {
 			panic(err)
 		}
@@ -90,17 +91,17 @@ func NewApiURL(conf *Config) *ApiURL {
 	}
 
 	return &ApiURL{
-		userParam: UserUrlParam{
+		UserParam: UserUrlParam{
 			URL:     *conf.Server,
 			OS:      os,
 			Version: version,
 		},
-		vpnParam: VpnUrlParam{
+		VpnParam: VpnUrlParam{
 			URL:     "",
 			OS:      os,
 			Version: version,
 		},
-		apiTemplates: apiTemplates,
+		ApiTemplates: apiTemplates,
 	}
 }
 
@@ -110,11 +111,10 @@ func (a *ApiURL) GetApiURL(name ApiName) string {
 
 	switch name {
 	case PingVPN, ConnectVPN, KeepAliveVPN, DisconnectVPN:
-		err = a.apiTemplates[name].Execute(&buf, a.vpnParam)
+		err = a.ApiTemplates[name].Execute(&buf, a.VpnParam)
 	default:
-		err = a.apiTemplates[name].Execute(&buf, a.userParam)
+		err = a.ApiTemplates[name].Execute(&buf, a.UserParam)
 	}
-
 	if err != nil {
 		panic(err)
 	}
