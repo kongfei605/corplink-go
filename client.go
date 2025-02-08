@@ -261,7 +261,7 @@ func (c *Client) corplinkLogin() (string, error) {
 			log.Println("Try to login with code from email")
 			return c.loginWithEmail()
 		default:
-			log.Println("Unsupported method %s, trying other methods", method)
+			log.Printf("Unsupported method %s, trying other methods", method)
 		}
 	}
 	return "", Error{msg: "failed to login with corplink"}
