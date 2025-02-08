@@ -17,7 +17,7 @@ func NewTerminalQrCode(data []byte) (*TerminalQrCode, error) {
 }
 
 func (t *TerminalQrCode) Print() {
-	width := 80 //t.code.Size()
+	width := 40 //t.code.Size()
 	height := int(float32(width) / 2.0)
 
 	// Create display buffer
