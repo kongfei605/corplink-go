@@ -579,7 +579,7 @@ func (c *Client) getFirstAvailableVPN(vpnList []RespVpnInfo) *RespVpnInfo {
 func (c *Client) pingVPN(ip string, apiPort uint16) int64 {
 	c.mu.Lock()
 	// Save original URL
-	originalURL := c.apiURL.vpnParam.URL
+	originalURL := c.apiURL.VpnParam.URL
 
 	// Update URL for VPN
 	serverURL, err := url.Parse(originalURL)
@@ -588,14 +588,18 @@ func (c *Client) pingVPN(ip string, apiPort uint16) int64 {
 		return -1
 	}
 
+	serverURL.Scheme = "https"
 	serverURL.Host = fmt.Sprintf("%s:%d", ip, apiPort)
-	c.apiURL.vpnParam.URL = serverURL.String()
+	c.apiURL.VpnParam.URL = serverURL.String()
 	c.mu.Unlock()
 
 	// Restore original URL when done
 	defer func() {
 		c.mu.Lock()
-		c.apiURL.vpnParam.URL = originalURL
+		if len(originalURL) > 0 {
+			log.Printf("Server name %s%s", originalURL, serverURL.String())
+			c.apiURL.VpnParam.URL = originalURL
+		}
 		c.mu.Unlock()
 	}()
 
